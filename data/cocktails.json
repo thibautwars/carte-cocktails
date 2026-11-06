@@ -1,0 +1,89 @@
+{
+  "cocktails": [
+    {
+      "slug": "pina-colada",
+      "name": "Piña colada",
+      "description": "Le grand classique des Caraïbes : rhum blanc, ananas et coco, onctueux comme une fin d'après-midi au soleil.",
+      "ingredients": [
+        { "name": "Rhum blanc", "quantity": 4, "unit": "cl" },
+        { "name": "Jus d'ananas", "quantity": 7.5, "unit": "cl" },
+        { "name": "Crème de coco", "quantity": 4.5, "unit": "cl" }
+      ],
+      "glass": "Hurricane ou tumbler",
+      "ice": "Glaçons ou glace pilée",
+      "technique": "Shaker avec glace",
+      "garnish": "Quartier d'ananas",
+      "steps": [
+        "Verser le rhum, le jus d'ananas et la crème de coco dans le shaker.",
+        "Remplir le shaker de glaçons et frapper vigoureusement 10 à 15 secondes.",
+        "Remplir le verre de glaçons ou de glace pilée.",
+        "Filtrer dans le verre.",
+        "Garnir d'un quartier d'ananas posé sur le bord du verre."
+      ]
+    },
+    {
+      "slug": "daiquiri",
+      "name": "Daiquiri",
+      "description": "Rhum, citron vert et sucre en parfait équilibre : vif, net et terriblement élégant.",
+      "ingredients": [
+        { "name": "Rhum blanc", "quantity": 4.5, "unit": "cl" },
+        { "name": "Jus de citron vert", "quantity": 3, "unit": "cl" },
+        { "name": "Sirop de sucre", "quantity": 1.5, "unit": "cl" }
+      ],
+      "glass": "Coupe rafraîchie",
+      "ice": "Servi sans glace",
+      "technique": "Shaker avec glace",
+      "garnish": "Rondelle de citron vert",
+      "steps": [
+        "Rafraîchir la coupe (quelques glaçons et un peu d'eau, ou quelques minutes au congélateur).",
+        "Verser le rhum, le jus de citron vert et le sirop de sucre dans le shaker.",
+        "Remplir le shaker de glaçons et frapper vigoureusement 10 à 15 secondes.",
+        "Vider la coupe, puis filtrer le cocktail dedans (double filtration avec une passoire fine).",
+        "Garnir d'une rondelle de citron vert."
+      ]
+    },
+    {
+      "slug": "moscow-mule",
+      "name": "Moscow mule",
+      "description": "Vodka, citron vert et ginger beer bien piquant, servis givrés dans leur mug en cuivre.",
+      "ingredients": [
+        { "name": "Vodka", "quantity": 5, "unit": "cl" },
+        { "name": "Jus de citron vert", "quantity": 1.5, "unit": "cl" },
+        { "name": "Ginger beer", "quantity": 12, "unit": "cl" }
+      ],
+      "glass": "Mug en cuivre",
+      "ice": "Glaçons",
+      "technique": "Construit dans le verre, ginger beer en dernier",
+      "garnish": "Quartier de citron vert (menthe en option)",
+      "steps": [
+        "Remplir le mug de glaçons.",
+        "Verser la vodka et le jus de citron vert.",
+        "Compléter avec la ginger beer.",
+        "Remuer délicatement d'un tour de cuillère.",
+        "Garnir d'un quartier de citron vert, et d'une branche de menthe si l'envie vous prend."
+      ]
+    },
+    {
+      "slug": "daiquiri-passion",
+      "name": "Daiquiri passion",
+      "description": "La fraîcheur du daiquiri relevée par l'acidulé exotique du fruit de la passion.",
+      "ingredients": [
+        { "name": "Rhum blanc", "quantity": 4.5, "unit": "cl" },
+        { "name": "Jus de citron vert", "quantity": 3, "unit": "cl" },
+        { "name": "Sirop de passion", "quantity": 1.5, "unit": "cl" },
+        { "name": "Sirop de sucre", "quantity": 1, "unit": "cl" }
+      ],
+      "glass": "Coupe rafraîchie",
+      "ice": "Servi sans glace",
+      "technique": "Shaker avec glace",
+      "garnish": "Demi fruit de la passion",
+      "steps": [
+        "Rafraîchir la coupe (quelques glaçons et un peu d'eau, ou quelques minutes au congélateur).",
+        "Verser le rhum, le jus de citron vert, le sirop de passion et le sirop de sucre dans le shaker.",
+        "Remplir le shaker de glaçons et frapper vigoureusement 10 à 15 secondes.",
+        "Vider la coupe, puis filtrer le cocktail dedans (double filtration avec une passoire fine).",
+        "Déposer un demi fruit de la passion à la surface."
+      ]
+    }
+  ]
+}
