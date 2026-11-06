@@ -3,11 +3,23 @@
     {
       "slug": "pina-colada",
       "name": "Piña colada",
-      "description": "Le grand classique des Caraïbes : rhum blanc, ananas et coco, onctueux comme une fin d'après-midi au soleil.",
+      "description": "Le grand classique des Caraïbes : rhum blanc, ananas et coco.",
       "ingredients": [
-        { "name": "Rhum blanc", "quantity": 4, "unit": "cl" },
-        { "name": "Jus d'ananas", "quantity": 7.5, "unit": "cl" },
-        { "name": "Crème de coco", "quantity": 4.5, "unit": "cl" }
+        {
+          "name": "Rhum blanc",
+          "quantity": 4,
+          "unit": "cl"
+        },
+        {
+          "name": "Jus d'ananas",
+          "quantity": 7.5,
+          "unit": "cl"
+        },
+        {
+          "name": "Crème de coco",
+          "quantity": 4.5,
+          "unit": "cl"
+        }
       ],
       "glass": "Hurricane ou tumbler",
       "ice": "Glaçons ou glace pilée",
@@ -26,9 +38,21 @@
       "name": "Daiquiri",
       "description": "Rhum, citron vert et sucre en parfait équilibre : vif, net et terriblement élégant.",
       "ingredients": [
-        { "name": "Rhum blanc", "quantity": 4.5, "unit": "cl" },
-        { "name": "Jus de citron vert", "quantity": 3, "unit": "cl" },
-        { "name": "Sirop de sucre", "quantity": 1.5, "unit": "cl" }
+        {
+          "name": "Rhum blanc",
+          "quantity": 4.5,
+          "unit": "cl"
+        },
+        {
+          "name": "Jus de citron vert",
+          "quantity": 3,
+          "unit": "cl"
+        },
+        {
+          "name": "Sirop de sucre",
+          "quantity": 1.5,
+          "unit": "cl"
+        }
       ],
       "glass": "Coupe rafraîchie",
       "ice": "Servi sans glace",
@@ -47,9 +71,21 @@
       "name": "Moscow mule",
       "description": "Vodka, citron vert et ginger beer bien piquant, servis givrés dans leur mug en cuivre.",
       "ingredients": [
-        { "name": "Vodka", "quantity": 5, "unit": "cl" },
-        { "name": "Jus de citron vert", "quantity": 1.5, "unit": "cl" },
-        { "name": "Ginger beer", "quantity": 12, "unit": "cl" }
+        {
+          "name": "Vodka",
+          "quantity": 5,
+          "unit": "cl"
+        },
+        {
+          "name": "Jus de citron vert",
+          "quantity": 1.5,
+          "unit": "cl"
+        },
+        {
+          "name": "Ginger beer",
+          "quantity": 12,
+          "unit": "cl"
+        }
       ],
       "glass": "Mug en cuivre",
       "ice": "Glaçons",
@@ -68,10 +104,26 @@
       "name": "Daiquiri passion",
       "description": "La fraîcheur du daiquiri relevée par l'acidulé exotique du fruit de la passion.",
       "ingredients": [
-        { "name": "Rhum blanc", "quantity": 4.5, "unit": "cl" },
-        { "name": "Jus de citron vert", "quantity": 3, "unit": "cl" },
-        { "name": "Sirop de passion", "quantity": 1.5, "unit": "cl" },
-        { "name": "Sirop de sucre", "quantity": 1, "unit": "cl" }
+        {
+          "name": "Rhum blanc",
+          "quantity": 4.5,
+          "unit": "cl"
+        },
+        {
+          "name": "Jus de citron vert",
+          "quantity": 3,
+          "unit": "cl"
+        },
+        {
+          "name": "Sirop de passion",
+          "quantity": 1.5,
+          "unit": "cl"
+        },
+        {
+          "name": "Sirop de sucre",
+          "quantity": 1,
+          "unit": "cl"
+        }
       ],
       "glass": "Coupe rafraîchie",
       "ice": "Servi sans glace",
