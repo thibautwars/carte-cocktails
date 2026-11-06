@@ -243,6 +243,7 @@ Remplace l'adresse entre guillemets si besoin. Tu peux aussi utiliser n'importe 
 ## 9. Personnaliser
 
 - **Titre, sous-titre, code PIN** : dans `config.js`.
+- **Après toute modification du code** (`style.css`, `config.js`, `app.js`, `editor.js`, `stock.js`) : ouvre `index.html` et augmente le numéro de version partout où il apparaît (`?v=2` devient `?v=3`). Sinon, les téléphones qui ont déjà ouvert la carte peuvent garder l'ancienne version en mémoire pendant une dizaine de minutes et afficher une erreur. Ce n'est pas nécessaire quand tu modifies seulement les cocktails, le stock ou les photos.
 - **Couleurs** : en haut de `style.css` (`--gold` pour l'or, `--bg` pour le fond…).
 - **Dépôt GitHub** : laisse `github.owner` et `github.repo` vides dans `config.js`, le site les devine à partir de son adresse. Ne les remplis que si tu utilises un nom de domaine personnalisé.
 
