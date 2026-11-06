@@ -1,18 +1,17 @@
 {
   "stock": [
-    "grenadine",
-    "sirop-de-sucre",
-    "sirop-de-vanille",
-    "sirop-de-peche",
-    "sirop-de-passion",
     "citron-vert",
-    "rhum-brun",
-    "rhum-blanc",
-    "vodka",
-    "jus-d-ananas",
-    "jus-de-raisin",
+    "creme-de-coco",
     "ginger-beer",
     "glacons",
-    "creme-de-coco"
+    "grenadine",
+    "jus-d-ananas",
+    "jus-de-raisin",
+    "rhum-brun",
+    "sirop-de-passion",
+    "sirop-de-peche",
+    "sirop-de-sucre",
+    "sirop-de-vanille",
+    "vodka"
   ]
 }
