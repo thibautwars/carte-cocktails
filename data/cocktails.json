@@ -31,7 +31,9 @@
         "Remplir le verre de glaçons ou de glace pilée.",
         "Filtrer dans le verre.",
         "Garnir d'un quartier d'ananas posé sur le bord du verre."
-      ]
+      ],
+      "image": "images/pina-colada.jpg",
+      "v": "mw5ds1oy"
     },
     {
       "slug": "daiquiri",
