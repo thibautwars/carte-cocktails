@@ -1,0 +1,21 @@
+{
+  "ingredients": [
+    { "id": "rhum-blanc", "nom": "Rhum blanc", "categorie": "alcools" },
+    { "id": "rhum-brun", "nom": "Rhum brun", "categorie": "alcools" },
+    { "id": "vodka", "nom": "Vodka", "categorie": "alcools" },
+    { "id": "grenadine", "nom": "Grenadine", "categorie": "sirops" },
+    { "id": "sirop-de-sucre", "nom": "Sirop de sucre", "categorie": "sirops" },
+    { "id": "sirop-de-vanille", "nom": "Sirop de vanille", "categorie": "sirops" },
+    { "id": "sirop-de-peche", "nom": "Sirop de pêche", "categorie": "sirops" },
+    { "id": "sirop-de-passion", "nom": "Sirop de fruit de la passion", "categorie": "sirops" },
+    { "id": "jus-d-ananas", "nom": "Jus d'ananas", "categorie": "jus-softs" },
+    { "id": "jus-de-raisin", "nom": "Jus de raisin", "categorie": "jus-softs" },
+    { "id": "ginger-beer", "nom": "Ginger beer", "categorie": "jus-softs" },
+    { "id": "citron-vert", "nom": "Citron vert", "categorie": "frais" },
+    { "id": "ananas", "nom": "Ananas", "categorie": "frais" },
+    { "id": "menthe", "nom": "Menthe fraîche", "categorie": "frais" },
+    { "id": "fruit-de-la-passion", "nom": "Fruit de la passion", "categorie": "frais" },
+    { "id": "glacons", "nom": "Glaçons", "categorie": "autres" },
+    { "id": "creme-de-coco", "nom": "Crème de coco", "categorie": "autres" }
+  ]
+}

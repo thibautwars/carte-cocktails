@@ -1,9 +1,10 @@
 /* ==========================================================
    La Carte — application principale
-   - charge et vérifie data/cocktails.json
+   - charge et vérifie data/cocktails.json, data/ingredients.json, data/stock.json
+   - calcule la disponibilité de chaque cocktail selon le stock
    - affiche la grille, la fiche, la recette et le calcul des doses
    - gère le mode invité / mode hôte (PIN)
-   Le formulaire d'ajout/modification est dans editor.js.
+   Le formulaire d'ajout/modification est dans editor.js, l'écran Stock dans stock.js.
    ========================================================== */
 (() => {
   'use strict';
@@ -30,6 +31,24 @@
     host: storage.get(KEY_HOST) === '1',
     previews: {},      // images fraîchement envoyées (affichées avant la mise en ligne)
     lastSlug: null,
+    ingredients: [],   // liste de référence (data/ingredients.json), triée
+    ingMap: new Map(), // id → ingrédient
+    stock: null,       // Set des ids en stock (null = stock inconnu : tout est disponible)
+    loadWarnings: [],  // problèmes de fichiers (ingredients.json / stock.json)
+    warnings: [],      // avertissements affichés en mode hôte
+  };
+
+  /** Catégories de l'écran Stock, dans l'ordre d'affichage. */
+  const CATEGORIES = [
+    ['alcools', 'Alcools'],
+    ['sirops', 'Sirops'],
+    ['jus-softs', 'Jus et softs'],
+    ['frais', 'Frais'],
+    ['autres', 'Autres'],
+  ];
+  const categoryIndex = (cat) => {
+    const i = CATEGORIES.findIndex(([id]) => id === cat);
+    return i === -1 ? CATEGORIES.length - 1 : i;
   };
 
   /* ---------- Petits outils ---------- */
@@ -114,7 +133,7 @@
   }
 
   /* ---------- Lecture et vérification du JSON ---------- */
-  function describeJsonError(err, text) {
+  function describeJsonError(err, text, path = 'data/cocktails.json') {
     const msg = String(err && err.message || err);
     let line = null, col = null;
     const lc = msg.match(/line (\d+) column (\d+)/i);
@@ -125,7 +144,7 @@
       line = before.length; col = before[before.length - 1].length + 1;
     }
     const where = line ? ` vers la ligne ${line}, colonne ${col}` : '';
-    return `Le fichier data/cocktails.json est mal écrit${where}. Vérifie les virgules (pas de virgule après le dernier élément d'une liste), les guillemets droits "…" et les accolades { }.`;
+    return `Le fichier ${path} est mal écrit${where}. Vérifie les virgules (pas de virgule après le dernier élément d'une liste), les guillemets droits "…" et les accolades { }.`;
   }
 
   /**
@@ -150,10 +169,18 @@
       if (typeof c.name !== 'string' || !c.name.trim()) errors.push(`${label} : le nom (« name ») est manquant.`);
       if (!Array.isArray(c.ingredients)) errors.push(`${label} : « ingredients » doit être une liste [ … ].`);
       else c.ingredients.forEach((ing, j) => {
-        if (!ing || typeof ing.name !== 'string' || !ing.name.trim()) errors.push(`${label} : l'ingrédient n°${j + 1} n'a pas de nom (« name »).`);
-        else if (ing.quantity != null && ing.quantity !== '' && !Number.isFinite(Number(ing.quantity))) {
-          errors.push(`${label} : la quantité de « ${ing.name} » n'est pas un nombre (écris 7.5 avec un point, sans guillemets).`);
+        // nouveau format : « id » (renvoie à data/ingredients.json) ; ancien format toléré : « name »
+        const hasId = ing && typeof ing.id === 'string' && ing.id.trim();
+        const hasName = ing && typeof ing.name === 'string' && ing.name.trim();
+        if (!hasId && !hasName) { errors.push(`${label} : l'ingrédient n°${j + 1} n'a pas d'identifiant (« id »).`); return; }
+        const what = ing.label || ing.id || ing.name;
+        if (ing.quantity != null && ing.quantity !== '' && !Number.isFinite(Number(ing.quantity))) {
+          errors.push(`${label} : la quantité de « ${what} » n'est pas un nombre (écris 7.5 avec un point, sans guillemets).`);
         }
+        if (ing.optionnel != null && typeof ing.optionnel !== 'boolean') {
+          errors.push(`${label} : « optionnel » de « ${what} » doit valoir true ou false (sans guillemets).`);
+        }
+        if (ing.label != null && typeof ing.label !== 'string') errors.push(`${label} : « label » de « ${what} » doit être un texte.`);
       });
       if (c.steps != null && !Array.isArray(c.steps)) errors.push(`${label} : « steps » doit être une liste [ … ].`);
       for (const key of ['slug', 'description', 'glass', 'ice', 'technique', 'garnish', 'image']) {
@@ -174,6 +201,87 @@
     return { cocktails, errors: [], data };
   }
 
+  /** data/ingredients.json → { ingredients, errors } */
+  function parseIngredients(text) {
+    let data;
+    try { data = JSON.parse(text); }
+    catch (err) { return { ingredients: [], errors: [describeJsonError(err, text, 'data/ingredients.json')] }; }
+    const list = Array.isArray(data) ? data : data && data.ingredients;
+    if (!Array.isArray(list)) return { ingredients: [], errors: ['data/ingredients.json doit avoir la forme { "ingredients": [ … ] }.'] };
+    const errors = [];
+    const seen = new Set();
+    const ingredients = [];
+    list.forEach((ing, i) => {
+      if (!ing || typeof ing.id !== 'string' || !ing.id.trim() || typeof ing.nom !== 'string' || !ing.nom.trim()) {
+        errors.push(`data/ingredients.json : l'ingrédient n°${i + 1} doit avoir un « id » et un « nom ».`);
+        return;
+      }
+      if (seen.has(ing.id)) { errors.push(`data/ingredients.json : l'id « ${ing.id} » est en double.`); return; }
+      seen.add(ing.id);
+      ingredients.push({ id: ing.id, nom: ing.nom, categorie: ing.categorie || 'autres' });
+    });
+    return { ingredients: sortIngredients(ingredients), errors };
+  }
+
+  /** data/stock.json → { stock: [ids], errors } */
+  function parseStock(text) {
+    let data;
+    try { data = JSON.parse(text); }
+    catch (err) { return { stock: null, errors: [describeJsonError(err, text, 'data/stock.json')] }; }
+    const list = Array.isArray(data) ? data : data && data.stock;
+    if (!Array.isArray(list)) return { stock: null, errors: ['data/stock.json doit avoir la forme { "stock": [ … ] }.'] };
+    return { stock: list.filter((id) => typeof id === 'string'), errors: [] };
+  }
+
+  function sortIngredients(list) {
+    return [...list].sort((a, b) => categoryIndex(a.categorie) - categoryIndex(b.categorie) || a.nom.localeCompare(b.nom, 'fr'));
+  }
+
+  /** Nom affiché d'un ingrédient de recette (« label » > nom de référence > ancien « name » > id). */
+  function ingredientName(ing) {
+    return ing.label || (state.ingMap.get(ing.id) || {}).nom || ing.name || ing.id || '?';
+  }
+
+  const lowerFirst = (s) => (s ? s.charAt(0).toLocaleLowerCase('fr') + s.slice(1) : s);
+
+  /**
+   * Disponibilité d'un cocktail : tous ses ingrédients NON optionnels doivent être en stock.
+   * stock : Set d'ids (null = stock inconnu → toujours disponible).
+   */
+  function availability(c, stock = state.stock) {
+    if (!stock) return { available: true, missing: [] };
+    const missing = [];
+    const seen = new Set();
+    for (const ing of c.ingredients) {
+      if (ing.optionnel || !ing.id) continue; // ancien format sans id : non évaluable (avertissement à part)
+      if (stock.has(ing.id) || seen.has(ing.id)) continue;
+      seen.add(ing.id);
+      missing.push(lowerFirst((state.ingMap.get(ing.id) || {}).nom || ing.label || ing.id));
+    }
+    return { available: missing.length === 0, missing };
+  }
+
+  /** Avertissements lisibles (ids inconnus, fichiers manquants), affichés en mode hôte. */
+  function computeWarnings() {
+    const out = [...state.loadWarnings];
+    for (const c of state.cocktails) {
+      for (const ing of c.ingredients) {
+        if (!ing.id) out.push(`« ${c.name} » : l'ingrédient « ${ing.name} » n'est pas relié à la liste des ingrédients (champ « id » manquant). Modifie le cocktail pour le choisir dans la liste.`);
+        else if (state.ingredients.length && !state.ingMap.has(ing.id)) out.push(`« ${c.name} » : ingrédient inconnu « ${ing.id} » (absent de data/ingredients.json).`);
+      }
+    }
+    if (state.stock && state.ingredients.length) {
+      for (const id of state.stock) if (!state.ingMap.has(id)) out.push(`data/stock.json : ingrédient inconnu « ${id} ».`);
+    }
+    state.warnings = [...new Set(out)];
+  }
+
+  /** JSON lisible : objets simples (ingrédients) sur une seule ligne. */
+  function prettyJson(value) {
+    return `${JSON.stringify(value, null, 2)
+      .replace(/\{\n\s+([^{}[\]]*?)\n\s*\}/g, (_, inner) => `{ ${inner.split(/,\n\s*/).join(', ')} }`)}\n`;
+  }
+
   /* ---------- Affichage de la grille ---------- */
   const grid = $('#grid');
   const status = $('#status');
@@ -186,34 +294,95 @@
       h('p', null, 'Corrige le fichier puis recharge la page.')));
   }
 
+  const SOLD_OUT = 'Victime de son succès';
+  const soldOutBanner = () => h('div', { class: 'sold-out', 'aria-hidden': 'true' }, h('span', null, SOLD_OUT));
+
   function renderGrid() {
     status.replaceChildren();
+    renderWarnings();
     if (!state.cocktails.length) {
       status.textContent = state.host ? 'La carte est vide : touche « + Ajouter » pour créer un premier cocktail.' : 'La carte est vide pour le moment.';
     }
-    grid.replaceChildren(...state.cocktails.map((c, i) => h('li', null,
-      h('button', {
-        type: 'button', class: 'card', style: `--i:${i}`, 'data-slug': c.slug,
-        'aria-haspopup': 'dialog', 'aria-label': `${c.name} — voir la fiche`,
-        onclick: () => openCocktail(c.slug),
-      }, media(c, { alt: '' }), h('span', { class: 'card-name', 'aria-hidden': 'true' }, c.name)))));
+    // les cocktails disponibles d'abord, les indisponibles en fin de grille (ordre du fichier conservé)
+    const items = state.cocktails.map((c) => ({ c, av: availability(c) }));
+    items.sort((a, b) => Number(!a.av.available) - Number(!b.av.available));
+
+    grid.replaceChildren(...items.map(({ c, av }, i) => {
+      const out = !av.available;
+      const showMissing = out && state.host;
+      let label = `${c.name}${out ? `, ${SOLD_OUT.toLowerCase()}` : ''}`;
+      if (showMissing) label += ` (manque : ${av.missing.join(', ')})`;
+      return h('li', null,
+        h('button', {
+          type: 'button', class: `card${out ? ' is-out' : ''}`, style: `--i:${i}`, 'data-slug': c.slug,
+          'aria-haspopup': 'dialog', 'aria-label': `${label} — voir la fiche`,
+          onclick: () => openCocktail(c.slug),
+        },
+        media(c, { alt: '' }),
+        out ? soldOutBanner() : null,
+        h('span', { class: 'card-name', 'aria-hidden': 'true' }, c.name,
+          showMissing ? h('small', { class: 'card-missing' }, `Manque : ${av.missing.join(', ')}`) : null)));
+    }));
+  }
+
+  /** Encadré d'avertissements, visible uniquement en mode hôte. */
+  function renderWarnings() {
+    const box = $('#host-warnings');
+    if (!box) return;
+    const show = state.host && state.warnings.length > 0;
+    box.hidden = !show;
+    if (!show) { box.replaceChildren(); return; }
+    box.replaceChildren(
+      h('p', { class: 'warn-title' }, 'À vérifier (visible seulement en mode hôte)'),
+      h('ul', null, state.warnings.map((w) => h('li', null, w))));
+  }
+
+  async function fetchText(path) {
+    const res = await fetch(path, { cache: 'no-cache' });
+    if (!res.ok) throw new Error(`erreur ${res.status}`);
+    return res.text();
+  }
+
+  /** Applique ingrédients + stock lus dans les fichiers (sans jamais bloquer la carte). */
+  function applyIngredients(list) {
+    state.ingredients = sortIngredients(list);
+    state.ingMap = new Map(state.ingredients.map((i) => [i.id, i]));
   }
 
   async function loadData() {
-    let text;
-    try {
-      const res = await fetch('data/cocktails.json', { cache: 'no-cache' });
-      if (!res.ok) throw new Error(`erreur ${res.status}`);
-      text = await res.text();
-    } catch (err) {
+    const [cocktailsRes, ingredientsRes, stockRes] = await Promise.allSettled(
+      ['data/cocktails.json', 'data/ingredients.json', 'data/stock.json'].map(fetchText));
+
+    if (cocktailsRes.status === 'rejected') {
       showError('Impossible de charger la carte', [location.protocol === 'file:'
         ? 'Le site est ouvert directement depuis le disque (adresse « file:// »). Lance le petit serveur local décrit dans le README.'
-        : `Le fichier data/cocktails.json est introuvable ou inaccessible (${err.message}).`]);
+        : `Le fichier data/cocktails.json est introuvable ou inaccessible (${cocktailsRes.reason.message}).`]);
       return;
     }
-    const result = parseCocktails(text);
+    const result = parseCocktails(cocktailsRes.value);
     if (result.errors.length) { showError('La carte contient une erreur', result.errors); return; }
+
+    // ingrédients et stock : en cas de problème, on avertit l'hôte mais la carte s'affiche quand même
+    state.loadWarnings = [];
+    if (ingredientsRes.status === 'fulfilled') {
+      const ing = parseIngredients(ingredientsRes.value);
+      state.loadWarnings.push(...ing.errors);
+      applyIngredients(ing.ingredients);
+    } else {
+      state.loadWarnings.push(`data/ingredients.json est introuvable (${ingredientsRes.reason.message}) : les noms d'ingrédients risquent de s'afficher sous forme d'identifiants.`);
+    }
+    if (stockRes.status === 'fulfilled') {
+      const st = parseStock(stockRes.value);
+      state.loadWarnings.push(...st.errors);
+      state.stock = st.stock ? new Set(st.stock) : null;
+    } else {
+      state.loadWarnings.push(`data/stock.json est introuvable (${stockRes.reason.message}) : tous les cocktails sont affichés comme disponibles.`);
+    }
+    if (!state.stock && stockRes.status === 'fulfilled') state.loadWarnings.push('Le stock est illisible : tous les cocktails sont affichés comme disponibles.');
+
     state.cocktails = result.cocktails;
+    state.loaded = true;
+    computeWarnings();
     renderGrid();
     openFromHash();
   }
@@ -256,17 +425,23 @@
   function renderSheet() {
     const c = state.current;
     if (!c) return;
+    const av = availability(c);
     sheetMedia.replaceChildren(media(c, { eager: true, alt: `Photo du cocktail ${c.name}` }));
+    sheetMedia.classList.toggle('is-out', !av.available);
+    if (!av.available) sheetMedia.append(soldOutBanner());
 
     const parts = [h('h2', { id: 'sheet-title', class: 'cocktail-name' }, c.name)];
+    if (!av.available) parts.push(h('p', { class: 'sr-only' }, `${SOLD_OUT} : ce cocktail n'est pas disponible pour le moment.`));
     if (c.description) parts.push(h('p', { class: 'cocktail-desc' }, c.description));
+    if (!av.available && state.host) parts.push(h('p', { class: 'missing-note' }, `Manque : ${av.missing.join(', ')}`));
 
     if (state.view === 'recipe' && state.host) {
       parts.push(renderRecipe(c));
     } else {
       parts.push(
         h('h3', { class: 'section-title' }, 'Ingrédients'),
-        h('ul', { class: 'chips' }, c.ingredients.map((ing) => h('li', null, ing.name))));
+        h('ul', { class: 'chips' }, c.ingredients.map((ing) => h('li', { class: ing.optionnel ? 'is-optional' : null },
+          ingredientName(ing), ing.optionnel ? h('small', null, ' · facultatif') : null))));
     }
 
     if (state.host) {
@@ -311,8 +486,14 @@
           h('button', { type: 'button', class: 'icon-btn', 'aria-label': 'Un verre de plus', onclick: () => setServings(state.servings + 1) }, '+'))),
 
       h('h3', { class: 'section-title' }, 'Ingrédients'),
-      h('ul', { class: 'qty-list' }, c.ingredients.map((ing, i) =>
-        h('li', null, h('span', { class: 'qty', 'data-i': i }), h('span', null, ing.name)))),
+      h('ul', { class: 'qty-list' }, c.ingredients.map((ing, i) => {
+        const missing = state.stock && ing.id && !state.stock.has(ing.id);
+        return h('li', { class: missing ? 'is-missing' : null },
+          h('span', { class: 'qty', 'data-i': i }),
+          h('span', { class: 'qty-name' }, ingredientName(ing),
+            ing.optionnel ? h('small', { class: 'tag' }, 'facultatif') : null,
+            missing ? h('small', { class: 'tag tag-missing' }, 'pas en stock') : null));
+      })),
 
       facts.length ? [
         h('h3', { class: 'section-title' }, 'Service'),
@@ -343,7 +524,7 @@
     sheetBody.querySelectorAll('.qty').forEach((el) => {
       const ing = c.ingredients[Number(el.dataset.i)];
       const q = ing.quantity === '' || ing.quantity == null ? null : Number(ing.quantity) * n;
-      el.textContent = formatQty(q, ing.unit) || '—';
+      el.textContent = formatQty(q, ing.unit);
       if (animate) { el.classList.remove('updated'); void el.offsetWidth; el.classList.add('updated'); }
     });
   }
@@ -472,7 +653,8 @@
     hostBar.hidden = !on;
     if (!on) state.view = 'info';
     if (state.current) renderSheet();
-    if (!state.cocktails.length && grid.isConnected && !status.querySelector('.error-box')) renderGrid();
+    // la grille change en mode hôte (ingrédients manquants, avertissements)
+    if (state.loaded && !status.querySelector('.error-box')) renderGrid();
   }
 
   // appui long de 2 secondes sur le titre
@@ -542,6 +724,7 @@
   });
   $('#host-add').addEventListener('click', () => window.Carte.onAdd && window.Carte.onAdd());
   $('#host-github').addEventListener('click', () => window.Carte.onSettings && window.Carte.onSettings());
+  $('#host-stock').addEventListener('click', () => window.Carte.onStock && window.Carte.onStock());
 
   /* ---------- Démarrage ---------- */
   document.title = CONFIG.title;
@@ -550,21 +733,29 @@
   $('#site-subtitle').hidden = !CONFIG.subtitle;
   setHost(state.host);
 
-  /* ---------- Ce que editor.js peut utiliser ---------- */
+  /* ---------- Ce que editor.js et stock.js peuvent utiliser ---------- */
+  /** Remplace cocktails / ingrédients / stock (après un enregistrement) et rafraîchit l'affichage. */
+  function setData({ cocktails, ingredients, stock } = {}) {
+    if (cocktails) state.cocktails = cocktails;
+    if (ingredients) applyIngredients(ingredients);
+    if (stock) state.stock = new Set(stock);
+    state.loadWarnings = [];
+    computeWarnings();
+    renderGrid();
+    if (state.current) {
+      const fresh = findCocktail(state.current.slug);
+      if (fresh) { state.current = fresh; renderSheet(); } else requestClose();
+    }
+  }
+
   window.Carte = {
-    CONFIG, state, storage, h, $, slugify, formatQty, media, imageSrc, parseCocktails, toast,
-    openCocktail,
-    /** Remplace la liste (après un enregistrement) et rafraîchit l'affichage. */
-    setCocktails(list) {
-      state.cocktails = list;
-      renderGrid();
-      if (state.current) {
-        const fresh = findCocktail(state.current.slug);
-        if (fresh) { state.current = fresh; renderSheet(); } else requestClose();
-      }
-    },
+    CONFIG, CATEGORIES, state, storage, h, $, slugify, formatQty, media, imageSrc, toast,
+    parseCocktails, parseIngredients, parseStock, sortIngredients, ingredientName, availability, prettyJson,
+    openCocktail, setData,
+    setCocktails: (cocktails) => setData({ cocktails }),
     closeSheet: requestClose,
     onEdit: null, onAdd: null, onSettings: null, // définis dans editor.js
+    onStock: null,                               // défini dans stock.js
   };
 
   loadData();

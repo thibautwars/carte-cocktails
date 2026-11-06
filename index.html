@@ -12,10 +12,11 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;1,500;1,600&family=Inter:wght@400;500;600&display=swap">
   <link rel="stylesheet" href="style.css">
-  <!-- Ordre important : d'abord les réglages, puis l'application, puis l'éditeur (mode hôte) -->
+  <!-- Ordre important : d'abord les réglages, puis l'application, puis l'éditeur et le stock (mode hôte) -->
   <script src="config.js"></script>
   <script src="app.js" defer></script>
   <script src="editor.js" defer></script>
+  <script src="stock.js" defer></script>
 </head>
 <body>
   <div class="ambient" aria-hidden="true"></div>
@@ -31,6 +32,8 @@
   <!-- ===== Grille des cocktails ===== -->
   <main id="main" class="main">
     <div id="status" class="status" role="status">Chargement de la carte…</div>
+    <!-- Avertissements (ingrédient inconnu, fichier manquant…) : visibles seulement en mode hôte -->
+    <div id="host-warnings" class="warn-box" role="note" hidden></div>
     <ul id="grid" class="grid" aria-label="Cocktails"></ul>
   </main>
 
@@ -42,6 +45,7 @@
   <nav id="host-bar" class="host-bar" aria-label="Mode hôte" hidden>
     <span class="host-badge">Mode hôte</span>
     <button type="button" class="btn btn-small btn-gold" id="host-add">+ Ajouter</button>
+    <button type="button" class="btn btn-small btn-ghost" id="host-stock">Stock</button>
     <button type="button" class="btn btn-small btn-ghost" id="host-github">GitHub</button>
     <button type="button" class="btn btn-small btn-ghost" id="host-exit">Quitter</button>
   </nav>
@@ -80,6 +84,9 @@
 
   <!-- ===== Formulaire d'ajout / modification (rempli par editor.js) ===== -->
   <dialog id="editor" class="modal modal-large" aria-labelledby="editor-title"></dialog>
+
+  <!-- ===== Écran Stock (rempli par stock.js) ===== -->
+  <dialog id="stock-dialog" class="modal modal-large" aria-labelledby="stock-title"></dialog>
 
   <!-- ===== Messages ===== -->
   <div id="toasts" class="toasts" aria-live="polite" popover="manual"></div>

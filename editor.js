@@ -1,8 +1,10 @@
 /* ==========================================================
-   La Carte — formulaire d'ajout / modification (mode hôte)
-   Enregistre directement dans le dépôt GitHub via l'API « contents » :
-     - l'image va dans images/<slug>.webp
+   La Carte — enregistrement sur GitHub + formulaire cocktail (mode hôte)
+
+   Chaque enregistrement crée UN SEUL commit dans le dépôt (API « Git Data ») :
+     - la photo va dans images/<slug>.webp
      - la recette va dans data/cocktails.json
+     - un ingrédient créé à la volée va dans data/ingredients.json
    GitHub Pages remet ensuite le site en ligne (≈ 1 minute).
    Le token GitHub n'est stocké QUE dans le localStorage de l'appareil.
    ========================================================== */
@@ -14,7 +16,7 @@
 
   const KEY_TOKEN = 'carte.githubToken';
   const API = 'https://api.github.com';
-  const DATA_PATH = 'data/cocktails.json';
+  const PATHS = { cocktails: 'data/cocktails.json', ingredients: 'data/ingredients.json', stock: 'data/stock.json' };
   const MAX_WIDTH = 1200;
   const TOKEN_HELP_URL = 'https://github.com/settings/personal-access-tokens/new';
 
@@ -31,12 +33,6 @@
   }
 
   /* ---------- Conversion texte / base64 (GitHub échange les fichiers en base64) ---------- */
-  function utf8ToBase64(text) {
-    const bytes = new TextEncoder().encode(text);
-    let bin = '';
-    for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-    return btoa(bin);
-  }
   function base64ToUtf8(b64) {
     const bin = atob(b64.replace(/\s/g, ''));
     return new TextDecoder().decode(Uint8Array.from(bin, (ch) => ch.charCodeAt(0)));
@@ -56,7 +52,7 @@
       case 401: return 'Token GitHub refusé : il est invalide ou expiré. Crée-en un nouveau (bouton « GitHub » en bas).';
       case 403: return "Le token n'a pas le droit d'écrire. Vérifie la permission « Contents : Read and write » sur ce dépôt.";
       case 404: return 'Dépôt introuvable. Vérifie que le token donne accès à ce dépôt, et le nom du dépôt dans config.js.';
-      case 409: return 'Le fichier a changé sur GitHub pendant l\'envoi. Réessaie.';
+      case 409: return 'Le dépôt a changé pendant l\'envoi. Réessaie.';
       case 422: return `GitHub a refusé l'envoi${detail ? ` (${detail})` : ''}.`;
       default: return `Erreur GitHub ${status}${detail ? ` : ${detail}` : ''}.`;
     }
@@ -90,42 +86,76 @@
     return res.status === 204 ? null : res.json();
   }
 
-  const contentsUrl = (repo, path) =>
-    `/repos/${repo.owner}/${repo.repo}/contents/${path.split('/').map(encodeURIComponent).join('/')}`;
+  const repoUrl = (repo) => `/repos/${repo.owner}/${repo.repo}`;
+  const contentsUrl = (repo, path) => `${repoUrl(repo)}/contents/${path.split('/').map(encodeURIComponent).join('/')}`;
 
-  const getFile = (repo, path) =>
-    gh(`${contentsUrl(repo, path)}?ref=${encodeURIComponent(repo.branch)}`, { allow404: true });
+  /** Lit un fichier du dépôt à une version précise (ref) ; null s'il n'existe pas. */
+  const getFile = (repo, path, ref) =>
+    gh(`${contentsUrl(repo, path)}?ref=${encodeURIComponent(ref || repo.branch)}`, { allow404: true });
 
-  const putFile = (repo, path, contentBase64, message, sha) =>
-    gh(contentsUrl(repo, path), { method: 'PUT', body: { message, content: contentBase64, branch: repo.branch, ...(sha ? { sha } : {}) } });
-
-  const deleteFile = (repo, path, message, sha) =>
-    gh(contentsUrl(repo, path), { method: 'DELETE', body: { message, sha, branch: repo.branch } });
-
-  /** Lit la version en ligne de cocktails.json (pour ne jamais écraser une modif faite ailleurs). */
-  async function readRemoteCocktails(repo) {
-    const file = await getFile(repo, DATA_PATH);
-    if (!file) return { list: [], sha: undefined };
-    const result = C.parseCocktails(base64ToUtf8(file.content));
-    if (result.errors.length) throw new Error(`Le fichier ${DATA_PATH} sur GitHub contient une erreur : ${result.errors[0]}`);
-    return { list: result.cocktails, sha: file.sha };
-  }
-
-  /** Lit le JSON en ligne, applique la modification, renvoie le tout (avec 1 nouvel essai en cas de conflit). */
-  async function commitCocktails(repo, mutate, message) {
+  /**
+   * Crée UN commit contenant plusieurs fichiers.
+   * build(read) reçoit une fonction read(path) → texte du fichier en ligne (ou null),
+   * et renvoie { files: [{ path, text } | { path, base64 } | { path, remove: true }], result }.
+   * En cas de modification simultanée, on relit tout et on recommence une fois.
+   */
+  async function commitChanges(repo, build, message) {
+    const base = repoUrl(repo);
     for (let attempt = 0; ; attempt++) {
-      const { list, sha } = await readRemoteCocktails(repo);
-      const next = mutate(list);
-      const json = `${JSON.stringify({ cocktails: next }, null, 2)}\n`;
+      const ref = await gh(`${base}/git/ref/heads/${repo.branch}`);
+      const headSha = ref.object.sha;
+      const head = await gh(`${base}/git/commits/${headSha}`);
+
+      const read = async (path) => {
+        const file = await getFile(repo, path, headSha);
+        return file ? base64ToUtf8(file.content) : null;
+      };
+      const { files, result } = await build(read);
+
+      const tree = [];
+      for (const f of files) {
+        if (f.remove) tree.push({ path: f.path, mode: '100644', type: 'blob', sha: null });
+        else if (f.base64) {
+          const blob = await gh(`${base}/git/blobs`, { method: 'POST', body: { content: f.base64, encoding: 'base64' } });
+          tree.push({ path: f.path, mode: '100644', type: 'blob', sha: blob.sha });
+        } else tree.push({ path: f.path, mode: '100644', type: 'blob', content: f.text });
+      }
+      const newTree = await gh(`${base}/git/trees`, { method: 'POST', body: { base_tree: head.tree.sha, tree } });
+      const commit = await gh(`${base}/git/commits`, { method: 'POST', body: { message, tree: newTree.sha, parents: [headSha] } });
       try {
-        await putFile(repo, DATA_PATH, utf8ToBase64(json), message, sha);
-        return next;
+        await gh(`${base}/git/refs/heads/${repo.branch}`, { method: 'PATCH', body: { sha: commit.sha, force: false } });
+        return result;
       } catch (err) {
-        if ((err.status === 409 || err.status === 422) && attempt === 0) continue;
+        if (err.status === 422 && attempt === 0) continue; // quelqu'un a enregistré entre-temps : on recommence
         throw err;
       }
     }
   }
+
+  /* ---------- Lecture des JSON en ligne (pour ne jamais écraser une modif faite ailleurs) ---------- */
+  async function readRemoteCocktails(read) {
+    const text = await read(PATHS.cocktails);
+    if (text == null) return [];
+    const r = C.parseCocktails(text);
+    if (r.errors.length) throw new Error(`Le fichier ${PATHS.cocktails} sur GitHub contient une erreur : ${r.errors[0]}`);
+    return r.cocktails;
+  }
+  async function readRemoteIngredients(read) {
+    const text = await read(PATHS.ingredients);
+    if (text == null) return [];
+    const r = C.parseIngredients(text);
+    if (r.errors.length) throw new Error(r.errors[0]);
+    return r.ingredients;
+  }
+  /** Ajoute les nouveaux ingrédients absents de la liste en ligne ; renvoie { list, changed }. */
+  function mergeIngredients(remote, additions) {
+    const ids = new Set(remote.map((i) => i.id));
+    const added = additions.filter((i) => !ids.has(i.id));
+    return { list: C.sortIngredients([...remote, ...added]), changed: added.length > 0 };
+  }
+  const serializeCocktails = (list) => C.prettyJson({ cocktails: list });
+  const serializeIngredients = (list) => C.prettyJson({ ingredients: list.map(({ id, nom, categorie }) => ({ id, nom, categorie })) });
+  const serializeStock = (ids) => `${JSON.stringify({ stock: [...ids] }, null, 2)}\n`;
 
   /* ---------- Compression de l'image (dans le navigateur, avant l'envoi) ---------- */
   function loadImage(file) {
@@ -163,6 +193,16 @@
     return { blob, ext, width, height };
   }
 
+  const svgClose = () => {
+    const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    s.setAttribute('viewBox', '0 0 24 24');
+    s.setAttribute('aria-hidden', 'true');
+    const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    p.setAttribute('d', 'M6 6l12 12M18 6L6 18');
+    s.append(p);
+    return s;
+  };
+
   /* ==========================================================
      Fenêtre « Connexion GitHub » (token)
      ========================================================== */
@@ -183,10 +223,9 @@
     const form = h('form', { class: 'modal-inner', novalidate: true },
       h('div', { class: 'editor-head' },
         h('h2', { id: 'token-title', class: 'modal-title' }, 'Connexion GitHub'),
-        h('button', { type: 'button', class: 'icon-btn', 'data-close': true, 'aria-label': 'Fermer' },
-          svgClose())),
+        h('button', { type: 'button', class: 'icon-btn', 'data-close': true, 'aria-label': 'Fermer' }, svgClose())),
       h('p', { class: 'modal-text' },
-        'Pour enregistrer tes cocktails, le site a besoin d\'un token GitHub (une clé d\'accès limitée à ton dépôt). ',
+        'Pour enregistrer tes cocktails et ton stock, le site a besoin d\'un token GitHub (une clé d\'accès limitée à ton dépôt). ',
         'Tu le saisis une seule fois : il reste uniquement dans ce navigateur. ',
         h('a', { href: TOKEN_HELP_URL, target: '_blank', rel: 'noopener' }, 'Créer un token'), ' (voir le README).'),
       h('p', { class: 'modal-text' }, repo
@@ -208,10 +247,9 @@
       const token = input.value.trim() || storage.get(KEY_TOKEN);
       if (!token) { statusEl.textContent = 'Colle ton token dans le champ.'; input.focus(); return; }
       saveBtn.disabled = true;
-      statusEl.style.color = '';
       statusEl.textContent = 'Vérification…';
       try {
-        if (repo) await gh(`/repos/${repo.owner}/${repo.repo}`, { token });
+        if (repo) await gh(repoUrl(repo), { token });
         storage.set(KEY_TOKEN, token);
         tokenDialog.close();
         toast(repo ? `Connecté à ${repo.owner}/${repo.repo} ✓` : 'Token enregistré sur cet appareil.', 'success');
@@ -230,6 +268,175 @@
     input.focus();
   }
 
+  /**
+   * Vérifie qu'on peut enregistrer (dépôt connu + token présent).
+   * Renvoie le dépôt, ou null (et affiche l'explication / ouvre la saisie du token).
+   */
+  function ensureReady(showError, retry) {
+    const repo = getRepo();
+    if (!repo) {
+      showError('Dépôt GitHub inconnu. Une fois le site en ligne sur GitHub Pages, il est détecté tout seul ; en local, remplis github.owner et github.repo dans config.js.');
+      return null;
+    }
+    if (!storage.get(KEY_TOKEN)) { openSettings({ then: retry }); return null; }
+    return repo;
+  }
+
+  /* ==========================================================
+     Sélecteur d'ingrédient avec recherche (formulaire cocktail)
+     ========================================================== */
+  const normalize = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+  const categoryLabel = (cat) => (C.CATEGORIES.find(([id]) => id === cat) || [null, 'Autres'])[1];
+
+  let formNewIngredients = new Map(); // ingrédients créés pendant cette saisie (id → { id, nom, categorie })
+  const knownIngredients = () => [...state.ingredients, ...formNewIngredients.values()];
+  const findIngredient = (id) => state.ingMap.get(id) || formNewIngredients.get(id);
+  const findByName = (text) => knownIngredients().find((i) => normalize(i.nom) === normalize(text));
+
+  let comboCount = 0;
+
+  function ingredientPicker(row, initialId, initialText) {
+    const listId = `combo-${++comboCount}`;
+    const input = h('input', {
+      type: 'text', name: 'ing-name', role: 'combobox', 'aria-autocomplete': 'list', 'aria-expanded': 'false',
+      'aria-controls': listId, 'aria-label': 'Ingrédient (rechercher ou créer)', placeholder: 'Rechercher…', autocomplete: 'off',
+    });
+    const list = h('ul', { class: 'combo-list', id: listId, role: 'listbox', hidden: true });
+    let options = [];
+    let active = -1;
+
+    input.value = initialText;
+    row.dataset.id = initialId || '';
+
+    function setId(id) {
+      if (row.dataset.id !== id) { // l'étiquette personnalisée ne vaut que pour l'ingrédient d'origine
+        delete row.dataset.label;
+        row.querySelector('.ing-label-hint')?.remove();
+      }
+      row.dataset.id = id || '';
+      row.classList.remove('is-unknown');
+      updateCategory(row);
+    }
+
+    function render() {
+      const q = normalize(input.value);
+      const matches = knownIngredients().filter((i) => !q || normalize(i.nom).includes(q) || i.id.includes(q)).slice(0, 8);
+      options = matches.map((i) => ({ type: 'pick', ing: i }));
+      if (q && !matches.some((i) => normalize(i.nom) === q)) options.push({ type: 'create', nom: input.value.trim() });
+      active = options.length ? 0 : -1;
+      list.replaceChildren(...options.map((o, idx) => h('li', {
+        role: 'option', id: `${listId}-${idx}`, 'aria-selected': String(idx === active),
+        class: o.type === 'create' ? 'combo-create' : null,
+        onmousedown: (e) => e.preventDefault(), // garde le focus dans le champ
+        onclick: () => choose(idx),
+      }, o.type === 'create'
+        ? `+ Créer « ${o.nom} »`
+        : [h('span', null, o.ing.nom), h('small', null, categoryLabel(o.ing.categorie))])));
+      list.hidden = options.length === 0;
+      input.setAttribute('aria-expanded', String(!list.hidden));
+      input.setAttribute('aria-activedescendant', active >= 0 ? `${listId}-${active}` : '');
+    }
+
+    function close() {
+      list.hidden = true;
+      input.setAttribute('aria-expanded', 'false');
+    }
+
+    function choose(idx) {
+      const o = options[idx];
+      if (!o) return;
+      if (o.type === 'create') {
+        const existing = findByName(o.nom) || findIngredient(slugify(o.nom));
+        if (existing) { input.value = existing.nom; setId(existing.id); }
+        else {
+          const ing = { id: slugify(o.nom), nom: o.nom.charAt(0).toUpperCase() + o.nom.slice(1), categorie: 'autres' };
+          formNewIngredients.set(ing.id, ing);
+          input.value = ing.nom;
+          setId(ing.id);
+        }
+      } else {
+        input.value = o.ing.nom;
+        setId(o.ing.id);
+      }
+      close();
+      row.querySelector('[name="ing-qty"]').focus();
+    }
+
+    function move(delta) {
+      if (list.hidden) { render(); return; }
+      if (!options.length) return;
+      active = (active + delta + options.length) % options.length;
+      list.querySelectorAll('li').forEach((li, i) => li.setAttribute('aria-selected', String(i === active)));
+      input.setAttribute('aria-activedescendant', `${listId}-${active}`);
+      list.children[active]?.scrollIntoView({ block: 'nearest' });
+    }
+
+    input.addEventListener('input', () => {
+      const exact = findByName(input.value);
+      setId(exact ? exact.id : '');
+      render();
+    });
+    input.addEventListener('focus', render);
+    input.addEventListener('blur', () => setTimeout(close, 120));
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowDown') { e.preventDefault(); move(1); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); move(-1); }
+      else if (e.key === 'Enter' && !list.hidden && active >= 0) { e.preventDefault(); choose(active); }
+      else if (e.key === 'Escape' && !list.hidden) { e.preventDefault(); e.stopPropagation(); close(); }
+    });
+
+    return h('div', { class: 'ing-pick' }, input, list);
+  }
+
+  /** Affiche le choix de catégorie seulement pour un ingrédient créé dans ce formulaire. */
+  function updateCategory(row) {
+    const id = row.dataset.id;
+    const isNew = id && formNewIngredients.has(id) && !state.ingMap.has(id);
+    let select = row.querySelector('.ing-cat');
+    if (!isNew) { select?.remove(); row.querySelector('.ing-cat-hint')?.remove(); return; }
+    if (!select) {
+      select = h('select', { class: 'ing-cat', 'aria-label': 'Catégorie du nouvel ingrédient' },
+        C.CATEGORIES.map(([value, label]) => h('option', { value }, label)));
+      select.addEventListener('change', () => {
+        const ing = formNewIngredients.get(row.dataset.id);
+        if (ing) ing.categorie = select.value;
+      });
+      row.append(h('p', { class: 'ing-hint ing-cat-hint' }, 'Nouvel ingrédient : choisis sa catégorie (il sera ajouté à la liste, mais pas au stock).'), select);
+    }
+    select.value = formNewIngredients.get(id).categorie;
+  }
+
+  function ingredientRow(ing = {}) {
+    const row = h('div', { class: 'ing-row' });
+    const known = ing.id ? findIngredient(ing.id) : (ing.name ? findByName(ing.name) : null);
+    const id = ing.id || (known && known.id) || '';
+    const text = known ? known.nom : (ing.name || ing.id || '');
+    if (ing.label && ing.id) row.dataset.label = ing.label;
+
+    const qty = h('input', { type: 'text', name: 'ing-qty', inputmode: 'decimal', 'aria-label': 'Quantité', placeholder: '4,5' });
+    qty.value = ing.quantity == null ? '' : String(ing.quantity).replace('.', ',');
+    const unit = h('input', { type: 'text', name: 'ing-unit', list: 'unit-list', 'aria-label': 'Unité', placeholder: 'cl' });
+    unit.value = ing.unit ?? (ing.id || ing.name ? '' : 'cl');
+    const optional = h('input', { type: 'checkbox', name: 'ing-opt' });
+    optional.checked = !!ing.optionnel;
+
+    row.append(
+      ingredientPicker(row, id, text),
+      qty,
+      unit,
+      h('label', { class: 'ing-opt', title: 'Un ingrédient optionnel manquant ne rend pas le cocktail indisponible' }, optional, 'Optionnel'),
+      h('button', { type: 'button', class: 'icon-btn', 'aria-label': 'Retirer cet ingrédient', onclick: () => {
+        const rows = row.parentElement;
+        row.remove();
+        if (!rows.children.length) rows.append(ingredientRow());
+      } }, svgClose()));
+    if (ing.label && ing.id) {
+      row.append(h('p', { class: 'ing-hint ing-label-hint' }, `Affiché sur la carte : « ${ing.label} »`));
+    }
+    if (!id && text) row.classList.add('is-unknown');
+    return row;
+  }
+
   /* ==========================================================
      Formulaire d'ajout / modification
      ========================================================== */
@@ -237,32 +444,6 @@
   let editing = null;       // cocktail modifié (null = ajout)
   let pendingImage = null;  // { blob, ext } image compressée en attente d'envoi
   let busy = false;
-
-  const svgClose = () => {
-    const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    s.setAttribute('viewBox', '0 0 24 24');
-    s.setAttribute('aria-hidden', 'true');
-    const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    p.setAttribute('d', 'M6 6l12 12M18 6L6 18');
-    s.append(p);
-    return s;
-  };
-
-  function ingredientRow(ing = {}) {
-    const row = h('div', { class: 'ing-row' },
-      h('input', { type: 'text', name: 'ing-name', 'aria-label': 'Ingrédient', placeholder: 'Rhum blanc', autocapitalize: 'sentences' }),
-      h('input', { type: 'text', name: 'ing-qty', inputmode: 'decimal', 'aria-label': 'Quantité', placeholder: '4,5' }),
-      h('input', { type: 'text', name: 'ing-unit', list: 'unit-list', 'aria-label': 'Unité', placeholder: 'cl' }),
-      h('button', { type: 'button', class: 'icon-btn', 'aria-label': 'Retirer cet ingrédient', onclick: () => {
-        const rows = row.parentElement;
-        row.remove();
-        if (!rows.children.length) rows.append(ingredientRow());
-      } }, svgClose()));
-    row.querySelector('[name="ing-name"]').value = ing.name || '';
-    row.querySelector('[name="ing-qty"]').value = ing.quantity == null ? '' : String(ing.quantity).replace('.', ',');
-    row.querySelector('[name="ing-unit"]').value = ing.unit ?? (ing.name ? '' : 'cl');
-    return row;
-  }
 
   function field(label, input, hint) {
     return h('label', { class: 'field' }, h('span', null, label), input, hint ? h('p', { class: 'field-hint' }, hint) : null);
@@ -273,10 +454,13 @@
     return el;
   }
 
+  const DEFAULT_ROWS = [{}, {}, {}, { id: 'glacons', quantity: null, unit: '' }];
+
   function openEditor(cocktail) {
     editing = cocktail || null;
     pendingImage = null;
-    const c = cocktail || { name: '', ingredients: [{}, {}, {}], steps: [] };
+    formNewIngredients = new Map();
+    const c = cocktail || { name: '', ingredients: DEFAULT_ROWS, steps: [] };
 
     const rows = h('div', { class: 'ing-rows' }, (c.ingredients.length ? c.ingredients : [{}]).map(ingredientRow));
     const steps = h('textarea', { name: 'steps', rows: 5, placeholder: 'Verser…\nFrapper…\nFiltrer…' });
@@ -308,7 +492,7 @@
 
     const form = h('form', { class: 'modal-inner', novalidate: true },
       h('div', { class: 'editor-head' },
-        h('h2', { id: 'editor-title', class: 'modal-title' }, editing ? `Modifier` : 'Nouveau cocktail'),
+        h('h2', { id: 'editor-title', class: 'modal-title' }, editing ? 'Modifier' : 'Nouveau cocktail'),
         h('button', { type: 'button', class: 'icon-btn', 'data-close': true, 'aria-label': 'Fermer le formulaire' }, svgClose())),
 
       field('Nom *', textInput('name', c.name, { required: true, placeholder: 'Mojito' }),
@@ -317,14 +501,15 @@
 
       h('fieldset', { class: 'field', style: 'border:0;padding:0;margin:0 0 14px' },
         h('legend', { class: 'field-label' }, 'Ingrédients *'),
-        h('div', { class: 'ing-head', 'aria-hidden': 'true' }, h('span', null, 'Nom'), h('span', null, 'Quantité'), h('span', null, 'Unité'), h('span')),
+        h('p', { class: 'field-hint', style: 'margin:0 0 10px' }, 'Choisis chaque ingrédient dans la liste (ou crée-le). Coche « Optionnel » pour les garnitures : leur absence ne rend pas le cocktail indisponible.'),
+        h('div', { class: 'ing-head', 'aria-hidden': 'true' }, h('span', null, 'Ingrédient'), h('span', null, 'Quantité'), h('span', null, 'Unité'), h('span', null, 'Optionnel'), h('span')),
         rows,
         h('button', { type: 'button', class: 'btn btn-ghost btn-small', style: 'margin-top:10px', onclick: () => {
           const row = ingredientRow();
           rows.append(row);
           row.querySelector('input').focus();
         } }, '+ Ajouter un ingrédient'),
-        h('datalist', { id: 'unit-list' }, ['cl', 'ml', 'trait(s)', 'cuillère(s) de bar', 'feuille(s)', 'pièce(s)', 'g'].map((u) => h('option', { value: u })))),
+        h('datalist', { id: 'unit-list' }, ['cl', 'ml', 'trait(s)', 'cuillère(s) de bar', 'feuille(s)', 'pièce(s)', 'quartier(s)', 'g'].map((u) => h('option', { value: u })))),
 
       h('div', { class: 'field-row' },
         field('Verre', textInput('glass', c.glass, { placeholder: 'Coupe rafraîchie' })),
@@ -367,33 +552,49 @@
 
   function setBusy(form, on) {
     busy = on;
-    form.querySelectorAll('button, input, textarea').forEach((el) => { el.disabled = on; });
+    form.querySelectorAll('button, input, textarea, select').forEach((el) => { el.disabled = on; });
   }
 
-  /** Lit le formulaire et renvoie { draft } ou { error }. */
+  /** Lit le formulaire et renvoie { draft, newIngredients } ou { error }. */
   function readForm(form) {
     const get = (n) => (form.elements[n] ? form.elements[n].value.trim() : '');
     const name = get('name');
     if (!name) return { error: 'Donne un nom au cocktail.', focus: form.elements.name };
 
     const ingredients = [];
+    const used = new Set();
     for (const row of form.querySelectorAll('.ing-row')) {
-      const ingName = row.querySelector('[name="ing-name"]').value.trim();
+      const pick = row.querySelector('[name="ing-name"]');
+      const text = pick.value.trim();
       const qtyText = row.querySelector('[name="ing-qty"]').value.trim().replace(',', '.');
       const unit = row.querySelector('[name="ing-unit"]').value.trim();
-      if (!ingName && !qtyText) continue;
-      if (!ingName) return { error: 'Un ingrédient a une quantité mais pas de nom.', focus: row.querySelector('[name="ing-name"]') };
+      if (!text && !qtyText) continue;
+      if (!text) return { error: 'Un ingrédient a une quantité mais pas de nom.', focus: pick };
+      let id = row.dataset.id;
+      if (!id) { const match = findByName(text); if (match) id = match.id; }
+      if (!id) {
+        row.classList.add('is-unknown');
+        return { error: `« ${text} » n'est pas dans la liste des ingrédients : choisis-le dans la liste déroulante, ou choisis « + Créer ».`, focus: pick };
+      }
       let quantity = null;
       if (qtyText) {
         quantity = Number(qtyText);
-        if (!Number.isFinite(quantity) || quantity < 0) return { error: `La quantité de « ${ingName} » doit être un nombre (ex. 4,5).`, focus: row.querySelector('[name="ing-qty"]') };
+        if (!Number.isFinite(quantity) || quantity < 0) return { error: `La quantité de « ${text} » doit être un nombre (ex. 4,5).`, focus: row.querySelector('[name="ing-qty"]') };
       }
-      ingredients.push({ name: ingName, quantity, unit });
+      const entry = { id };
+      if (row.dataset.label && row.dataset.id === id) entry.label = row.dataset.label;
+      entry.quantity = quantity;
+      entry.unit = unit;
+      if (row.querySelector('[name="ing-opt"]').checked) entry.optionnel = true;
+      ingredients.push(entry);
+      used.add(id);
     }
     if (!ingredients.length) return { error: 'Ajoute au moins un ingrédient.', focus: form.querySelector('[name="ing-name"]') };
 
     const steps = get('steps').split('\n').map((s) => s.trim().replace(/^\d+\s*[.)-]\s*/, '')).filter(Boolean);
+    const newIngredients = [...formNewIngredients.values()].filter((i) => used.has(i.id) && !state.ingMap.has(i.id));
     return {
+      newIngredients,
       draft: {
         name,
         description: get('description'),
@@ -427,18 +628,11 @@
 
   async function onSave(form, progress) {
     if (busy) return;
-    const { draft, error, focus } = readForm(form);
+    const { draft, newIngredients, error, focus } = readForm(form);
     if (error) { setProgress(progress, error, 'error'); focus?.focus(); return; }
 
-    const repo = getRepo();
-    if (!repo) {
-      setProgress(progress, 'Dépôt GitHub inconnu. Une fois le site en ligne sur GitHub Pages, il est détecté tout seul ; en local, remplis github.owner et github.repo dans config.js.', 'error');
-      return;
-    }
-    if (!storage.get(KEY_TOKEN)) {
-      openSettings({ then: () => onSave(form, progress) });
-      return;
-    }
+    const repo = ensureReady((msg) => setProgress(progress, msg, 'error'), () => onSave(form, progress));
+    if (!repo) return;
 
     const slug = editing ? editing.slug : slugify(draft.name);
     if (!editing && state.cocktails.some((c) => c.slug === slug)) {
@@ -450,29 +644,45 @@
     try {
       let imagePath = editing ? editing.image : undefined;
       let version = editing ? editing.v : undefined;
-
+      let imageBase64 = null;
       if (pendingImage) {
-        setProgress(progress, 'Envoi de la photo…');
+        setProgress(progress, 'Préparation de la photo…');
         imagePath = `images/${slug}.${pendingImage.ext}`;
-        const existing = await getFile(repo, imagePath);
-        await putFile(repo, imagePath, await blobToBase64(pendingImage.blob), `Photo : ${draft.name}`, existing && existing.sha);
+        imageBase64 = await blobToBase64(pendingImage.blob);
         version = Date.now().toString(36); // force les téléphones à recharger la nouvelle photo
       }
 
-      setProgress(progress, 'Mise à jour de la carte…');
-      const list = await commitCocktails(repo, (current) => {
-        const index = current.findIndex((c) => c.slug === slug);
+      setProgress(progress, 'Enregistrement sur GitHub…');
+      const result = await commitChanges(repo, async (read) => {
+        const cocktails = await readRemoteCocktails(read);
+        const index = cocktails.findIndex((c) => c.slug === slug);
         if (!editing && index !== -1) throw new Error(`Un cocktail « ${draft.name} » existe déjà sur la carte en ligne. Recharge la page.`);
         const entry = buildEntry(slug, draft, imagePath, version);
-        if (index === -1) current.push(entry); else current[index] = entry;
-        return current;
+        if (index === -1) cocktails.push(entry); else cocktails[index] = entry;
+
+        const files = [];
+        if (imageBase64) files.push({ path: imagePath, base64: imageBase64 });
+        files.push({ path: PATHS.cocktails, text: serializeCocktails(cocktails) });
+
+        let ingredients = null;
+        if (newIngredients.length) {
+          const merged = mergeIngredients(await readRemoteIngredients(read), newIngredients);
+          ingredients = merged.list;
+          if (merged.changed) files.push({ path: PATHS.ingredients, text: serializeIngredients(ingredients) });
+        }
+        return { files, result: { cocktails, ingredients } };
       }, `${editing ? 'Modification' : 'Ajout'} : ${draft.name}`);
 
       if (pendingImage) state.previews[slug] = URL.createObjectURL(pendingImage.blob);
-      C.setCocktails(list);
+      C.setData({ cocktails: result.cocktails, ingredients: result.ingredients || undefined });
       busy = false;
       editor.close();
       toast(`« ${draft.name} » est enregistré ✓ La carte publique sera à jour dans environ 1 minute (recharge la page pour vérifier).`, 'success', 9000);
+      const entry = result.cocktails.find((c) => c.slug === slug);
+      const av = entry && C.availability(entry);
+      if (av && !av.available) {
+        toast(`Pas en stock : ${av.missing.join(', ')}. Le cocktail s'affiche « Victime de son succès » tant que tu ne l'ajoutes pas dans Stock.`, 'info', 9000);
+      }
       if (!editing) C.openCocktail(slug);
     } catch (err) {
       setProgress(progress, `Échec de l'enregistrement : ${err.message}`, 'error');
@@ -485,23 +695,23 @@
     if (!editing || busy) return;
     const target = editing;
     if (!window.confirm(`Retirer « ${target.name} » de la carte ? Sa photo sera aussi supprimée du dépôt.`)) return;
-    const repo = getRepo();
-    if (!repo) { setProgress(progress, 'Dépôt GitHub inconnu (voir config.js).', 'error'); return; }
-    if (!storage.get(KEY_TOKEN)) { openSettings({ then: () => onDelete(progress) }); return; }
+    const repo = ensureReady((msg) => setProgress(progress, msg, 'error'), () => onDelete(progress));
+    if (!repo) return;
 
     const form = editor.querySelector('form');
     setBusy(form, true);
     try {
       setProgress(progress, 'Suppression…');
-      const list = await commitCocktails(repo, (current) => current.filter((c) => c.slug !== target.slug), `Suppression : ${target.name}`);
       const imagePath = target.image || `images/${target.slug}.webp`;
-      try {
-        const file = await getFile(repo, imagePath);
-        if (file) await deleteFile(repo, imagePath, `Suppression de la photo : ${target.name}`, file.sha);
-      } catch { /* la recette est déjà retirée ; la photo restante n'est pas grave */ }
+      const list = await commitChanges(repo, async (read) => {
+        const cocktails = (await readRemoteCocktails(read)).filter((c) => c.slug !== target.slug);
+        const files = [{ path: PATHS.cocktails, text: serializeCocktails(cocktails) }];
+        if (await getFile(repo, imagePath)) files.push({ path: imagePath, remove: true });
+        return { files, result: cocktails };
+      }, `Suppression : ${target.name}`);
       busy = false;
       editor.close();
-      C.setCocktails(list);
+      C.setData({ cocktails: list });
       toast(`« ${target.name} » a été retiré de la carte. Mise en ligne dans environ 1 minute.`, 'success', 8000);
     } catch (err) {
       setProgress(progress, `Échec de la suppression : ${err.message}`, 'error');
@@ -514,5 +724,9 @@
   C.onAdd = () => openEditor(null);
   C.onEdit = (cocktail) => openEditor(cocktail);
   C.onSettings = () => openSettings();
-  C.getRepo = getRepo;
+  C.github = {
+    getRepo, ensureReady, commitChanges, readRemoteIngredients, mergeIngredients,
+    serializeIngredients, serializeStock, PATHS,
+  };
+  C.svgClose = svgClose;
 })();
