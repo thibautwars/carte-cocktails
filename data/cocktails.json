@@ -46,7 +46,9 @@
         "Remplir le shaker de glaçons et frapper vigoureusement 10 à 15 secondes.",
         "Vider la coupe, puis filtrer le cocktail dedans (double filtration avec une passoire fine).",
         "Garnir d'une rondelle de citron vert."
-      ]
+      ],
+      "image": "images/daiquiri.jpg",
+      "v": "mw7qivvd"
     },
     {
       "slug": "moscow-mule",
