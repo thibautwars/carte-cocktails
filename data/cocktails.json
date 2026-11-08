@@ -28,9 +28,9 @@
     {
       "slug": "daiquiri",
       "name": "Daiquiri",
-      "description": "Rhum, citron vert et sucre en parfait équilibre : vif, net et terriblement élégant.",
+      "description": "Rhum, citron vert et sucre en parfait équilibre",
       "ingredients": [
-        { "id": "rhum-blanc", "quantity": 4.5, "unit": "cl" },
+        { "id": "rhum-blanc", "quantity": 3, "unit": "cl" },
         { "id": "citron-vert", "label": "Jus de citron vert", "quantity": 3, "unit": "cl" },
         { "id": "sirop-de-sucre", "quantity": 1.5, "unit": "cl" },
         { "id": "glacons", "quantity": null, "unit": "" },
